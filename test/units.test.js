@@ -125,19 +125,28 @@ test('installed apps open without asking, and anything else still asks', async (
   const system = await import('../server/tools/system.js');
   const openApp = system.default.find((t) => t.name === 'open_app');
 
-  const menu = tempDir();
-  fs.mkdirSync(path.join(menu, 'Vendor'));
-  fs.writeFileSync(path.join(menu, 'Vendor', 'Some App.lnk'), '');
-  fs.writeFileSync(path.join(menu, 'Vendor', 'Uninstall Some App.lnk'), '');
-  assert.equal(system.findStartMenuApp('some app', [menu]), path.join(menu, 'Vendor', 'Some App.lnk'));
-  assert.equal(system.findStartMenuApp('Uninstall Some App', [menu]), null);
-  assert.equal(system.findStartMenuApp('app', [menu]), null, 'names must match exactly');
-  assert.equal(system.findStartMenuApp('..\\Vendor\\Some App', [menu]), null);
+  const apps = [
+    { Name: 'Microsoft Teams', AppID: 'MSTeams_8wekyb3d8bbwe!MSTeams' },
+    { Name: 'Word', AppID: 'word-id' },
+    { Name: 'Word Viewer Setup', AppID: 'viewer-id' },
+    { Name: 'WordPad', AppID: 'wordpad-id' },
+    { Name: 'Uninstall Teams', AppID: 'uninstall-id' },
+    { Name: 'C++ Tools', AppID: 'cpp-id' },
+  ];
+  const id = (name) => system.matchInstalledApp(name, apps)?.AppID ?? null;
+  assert.equal(id('Microsoft Teams'), 'MSTeams_8wekyb3d8bbwe!MSTeams');
+  assert.equal(id('teams'), 'MSTeams_8wekyb3d8bbwe!MSTeams', 'part of the name is enough');
+  assert.equal(id('word'), 'word-id', 'the shortest whole-word match wins');
+  assert.equal(id('pad'), null, 'only whole words match');
+  assert.equal(id('Uninstall Teams'), null);
+  assert.equal(id('C++'), 'cpp-id', 'odd characters are safe');
+  assert.equal(id('C:\\Users\\Public\\payload.exe'), null);
+  assert.equal(id('..\\Word'), null);
+  assert.equal(id(''), null);
 
-  assert.equal(openApp.confirm({ name: 'Excel' }), null);
-  assert.equal(openApp.confirm({ name: 'word' }), null);
-  assert.ok(openApp.confirm({ name: 'C:\\Users\\Public\\payload.exe' }), 'an unknown program must ask');
-  assert.ok(openApp.confirm({ name: 'totally-unknown-program' }), 'an unknown name must ask');
+  assert.equal(await openApp.confirm({ name: 'Excel' }), null);
+  assert.ok(await openApp.confirm({ name: 'C:\\Users\\Public\\payload.exe' }), 'an unknown program must ask');
+  assert.ok(await openApp.confirm({ name: 'totally-unknown-program' }), 'an unknown name must ask');
 });
 
 test('email headers cannot be injected', () => {

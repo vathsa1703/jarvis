@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { FILES_DIR } from '../config.js';
 import { runPowerShell, startDetached } from '../powershell.js';
 
@@ -32,31 +30,48 @@ const KNOWN_APPS = {
   settings: 'ms-settings:',
 };
 
-function startMenuFolders() {
-  return [process.env.ProgramData, process.env.APPDATA]
-    .filter(Boolean)
-    .map((base) => path.join(base, 'Microsoft', 'Windows', 'Start Menu', 'Programs'));
+const APP_LIST_MAX_AGE_MS = 5 * 60_000;
+const APP_LIST_RETRY_MS = 30_000;
+let appList = { apps: [], fetchedAt: 0 };
+
+// Everything in the Start menu, including Store apps like Teams that have no shortcut file.
+async function fetchInstalledApps() {
+  const { code, stdout } = await runPowerShell('Get-StartApps | Select-Object Name,AppID | ConvertTo-Json -Compress', { timeoutMs: 20_000 });
+  if (code !== 0 || !stdout.trim()) return [];
+  return [].concat(JSON.parse(stdout));
 }
 
-// Finds an installed app's Start Menu shortcut by its exact name. Launching one
-// passes no arguments, so a shortcut can only start the app as you'd start it yourself.
-export function findStartMenuApp(name, folders = startMenuFolders()) {
-  const wanted = `${String(name).trim().toLowerCase()}.lnk`;
-  if (wanted.startsWith('uninstall')) return null;
-  for (const folder of folders) {
-    let entries;
-    try {
-      entries = fs.readdirSync(folder, { recursive: true, withFileTypes: true });
-    } catch {
-      continue; // This Start Menu folder doesn't exist or can't be read.
-    }
-    const match = entries.find((e) => e.isFile() && e.name.toLowerCase() === wanted);
-    if (match) return path.join(match.parentPath, match.name);
+// An exact name wins. Otherwise "teams" finds "Microsoft Teams" as a whole word, and the
+// shortest name wins, so "word" means "Word" and never "WordPad" or "Word Viewer Setup".
+export function matchInstalledApp(name, apps) {
+  const wanted = String(name).trim().toLowerCase();
+  if (!wanted || /[\\/:]/.test(wanted) || wanted.startsWith('uninstall')) return null;
+  const usable = apps.filter((app) => app.Name && app.AppID && !/uninstall/i.test(app.Name));
+  const exact = usable.find((app) => app.Name.toLowerCase() === wanted);
+  if (exact) return exact;
+  const pattern = new RegExp(`(?:^|\\s)${wanted.replace(/[.*+?^${}()|[\]]/g, '\\$&')}(?:\\s|$)`, 'i');
+  return usable.filter((app) => pattern.test(app.Name)).sort((a, b) => a.Name.length - b.Name.length)[0] ?? null;
+}
+
+async function findInstalledApp(name) {
+  const age = Date.now() - appList.fetchedAt;
+  if (age > APP_LIST_MAX_AGE_MS) appList = { apps: await fetchInstalledApps(), fetchedAt: Date.now() };
+  let match = matchInstalledApp(name, appList.apps);
+  // Not found in an older list, so it may have just been installed.
+  if (!match && Date.now() - appList.fetchedAt > APP_LIST_RETRY_MS) {
+    appList = { apps: await fetchInstalledApps(), fetchedAt: Date.now() };
+    match = matchInstalledApp(name, appList.apps);
   }
-  return null;
+  return match;
 }
 
-const knownApp = (name) => KNOWN_APPS[name.trim().toLowerCase()] || findStartMenuApp(name);
+// Launching through the Start menu passes no arguments, so this can only start
+// an installed app the way you'd start it yourself.
+async function knownApp(name) {
+  const installed = await findInstalledApp(name);
+  if (installed) return `shell:AppsFolder\\${installed.AppID}`;
+  return KNOWN_APPS[name.trim().toLowerCase()] ?? null;
+}
 
 export function parseWebUrl(value) {
   let url;
@@ -87,10 +102,10 @@ export default [
       properties: { name: { type: 'string', description: 'Application name' } },
       required: ['name'],
     },
-    confirm: ({ name }) =>
-      knownApp(name) ? null : { title: 'Open this program?', details: name },
+    confirm: async ({ name }) =>
+      (await knownApp(name)) ? null : { title: "This app isn't in your Start menu. Open it anyway?", details: name },
     run: async ({ name }) => {
-      await startDetached(knownApp(name) || name);
+      await startDetached((await knownApp(name)) || name);
       return `Opened ${name}.`;
     },
   },

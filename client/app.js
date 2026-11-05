@@ -275,6 +275,7 @@ function connect() {
   socket = new WebSocket(`ws://${location.host}/ws`);
   socket.addEventListener('open', () => {
     reconnectDelay = 500;
+    report(`connected, hands-free ${handsFree ? 'on' : 'off'}, ${recognitionLanguage()}, page ${document.visibilityState}`);
   });
   socket.addEventListener('message', (message) => handleEvent(JSON.parse(message.data)));
   socket.addEventListener('close', () => {
