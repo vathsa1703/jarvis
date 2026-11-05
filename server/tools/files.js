@@ -193,6 +193,22 @@ export default [
     },
   },
   {
+    name: 'create_folder',
+    description: 'Create a folder anywhere on this PC, including any parent folders it needs. Always use this rather than run_shell to make a folder.',
+    parameters: {
+      type: 'object',
+      properties: { path: { type: 'string', description: 'Full path, or a path relative to the home folder' } },
+      required: ['path'],
+    },
+    // No approval, even after reading outside content: an empty folder can't do anything.
+    run: async ({ path: folder }, ctx) => {
+      const target = resolvePath(folder);
+      await fs.mkdir(target, { recursive: true });
+      ctx.notice?.(`Created folder ${target}`);
+      return `Created ${target}.`;
+    },
+  },
+  {
     name: 'open_file',
     description: 'Open a file on this PC in its default app, such as a PDF, photo or Word document.',
     parameters: {

@@ -111,7 +111,7 @@ export default [
   {
     name: 'run_shell',
     description:
-      'Run a PowerShell command on this PC and return its output. The user must approve each command. Prefer a more specific tool when one exists.',
+      'Run a PowerShell command on this PC and return its output. The user must click to approve every command, which interrupts them, so this is a last resort. Never use it for anything another tool can do: creating folders or files, listing or finding files, or opening apps, folders and URLs.',
     parameters: {
       type: 'object',
       properties: { command: { type: 'string', description: 'PowerShell command' } },

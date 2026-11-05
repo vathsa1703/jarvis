@@ -80,7 +80,7 @@ test('finds files by name, skipping noise folders', async () => {
 });
 
 test('the wake phrase survives mishearing without firing on ordinary talk', async () => {
-  const { parseWake } = await import('../client/wake.js');
+  const { parseWake } = await import('../client/speech.js');
   assert.deepEqual(parseWake('hey Jarvis what time is it'), { command: 'what time is it' });
   assert.deepEqual(parseWake('Hey Jarvis, what time is it?'), { command: 'what time is it?' });
   assert.deepEqual(parseWake('Jarvis'), { command: '' });
@@ -91,6 +91,34 @@ test('the wake phrase survives mishearing without firing on ordinary talk', asyn
   assert.equal(parseWake('I saw Travis Scott yesterday'), null);
   assert.equal(parseWake('what a nice day'), null);
   assert.equal(parseWake('the davis cup is on'), null);
+});
+
+test('goodbye and stop only count as the whole sentence', async () => {
+  const { isGoodbye, isStopPhrase, isFiller } = await import('../client/speech.js');
+  for (const phrase of ['thanks', 'Thank you.', 'ok thanks', 'thanks jarvis', "that's all", 'bye', 'go to sleep']) {
+    assert.equal(isGoodbye(phrase), true, phrase);
+  }
+  for (const phrase of ['thanks, now open Excel', 'say bye to Rahul in a mail', 'thank you for what']) {
+    assert.equal(isGoodbye(phrase), false, phrase);
+  }
+  assert.equal(isStopPhrase('stop'), true);
+  assert.equal(isStopPhrase('never mind'), true);
+  assert.equal(isStopPhrase('stop the music on spotify'), false);
+  assert.equal(isFiller('ummm'), true);
+  assert.equal(isFiller('open excel'), false);
+});
+
+test('replies are prepared for reading aloud', async () => {
+  const { speechText, splitSentences } = await import('../client/speech.js');
+  assert.equal(speechText('**Bold** and `code`'), 'Bold and code');
+  assert.equal(speechText('- one\n- two\n1. three'), 'one two three');
+  assert.equal(speechText('See [the docs](https://x.test/a) or https://y.test/b now'), 'See the docs or a link now');
+  assert.equal(speechText('```js\nlet a;\n```\nDone'), 'Done');
+
+  assert.deepEqual(splitSentences('It is 6:05 now. Version 3.5 is ou'), { sentences: ['It is 6:05 now.'], rest: 'Version 3.5 is ou' });
+  assert.deepEqual(splitSentences('Really? Yes! And'), { sentences: ['Really?', 'Yes!'], rest: 'And' });
+  assert.deepEqual(splitSentences('No end yet'), { sentences: [], rest: 'No end yet' });
+  assert.deepEqual(splitSentences('Costs 3.'), { sentences: [], rest: 'Costs 3.' }, 'could still become 3.5');
 });
 
 test('installed apps open without asking, and anything else still asks', async () => {

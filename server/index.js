@@ -10,6 +10,7 @@ import { clearHistory } from './memory.js';
 import { googleAuthUrl, handleGoogleCallback } from './tools/email.js';
 
 const CONFIRM_TIMEOUT_MS = 5 * 60_000;
+const BOOT_ID = randomUUID(); // Lets an open window notice the server restarted with new code.
 const allowedHosts = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`]);
 const allowedOrigins = new Set([...allowedHosts].map((host) => `http://${host}`));
 
@@ -22,7 +23,8 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.static(path.join(ROOT, 'client')));
+// no-cache means "check for changes first", so the window never runs stale code.
+app.use(express.static(path.join(ROOT, 'client'), { setHeaders: (res) => res.set('Cache-Control', 'no-cache') }));
 
 app.get('/auth/google', (_req, res) => {
   try {
@@ -59,7 +61,7 @@ const broadcast = (event) => wss.clients.forEach((client) => send(client, event)
 function statusEvent() {
   try {
     const { name, model } = getProvider();
-    return { type: 'status', provider: name, model };
+    return { type: 'status', provider: name, model, boot: BOOT_ID };
   } catch (err) {
     return { type: 'error', message: err.message };
   }
@@ -85,6 +87,8 @@ wss.on('connection', (socket) => {
         settle(false);
       }, CONFIRM_TIMEOUT_MS);
       pending.set(id, settle);
+      // The title only, since details can hold email text and file contents.
+      console.log(`[approval] ${new Date().toISOString()} ${title}`);
       send(socket, { type: 'confirm', id, title, details });
     });
   }

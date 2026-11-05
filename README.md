@@ -33,7 +33,7 @@ Get a free key at [console.groq.com/keys](https://console.groq.com/keys) and pas
 npm start
 ```
 
-Open http://localhost:3000. Use the mic button to talk, or turn on **Wake word** and say "hey Jarvis".
+Open http://localhost:3000. Press the mic button and start talking, or turn on **Hands-free** and say "hey Jarvis".
 
 ## Always on
 
@@ -45,7 +45,15 @@ npm run autostart
 
 This adds a scheduled task for your Windows user, with no admin rights needed. At every login and unlock it starts the server in the background if it isn't running, then opens the Jarvis window or brings it to the front.
 
-In the Jarvis window, click **Wake word** and allow the microphone. It stays on from then on, so "hey Jarvis" works hands-free while the window is open. While the wake word is on, the browser sends what the mic hears to its speech service (Google, in Chrome) to find the phrase.
+In the Jarvis window, click **Hands-free** and allow the microphone. It stays on from then on. While it's on, the browser sends what the mic hears to its speech service (Google, in Chrome) to find the phrase.
+
+## Talking to it
+
+Say "hey Jarvis", then just talk. You don't need the wake word again or any button, because Jarvis keeps listening for 20 seconds after each reply. Say "thanks" or "bye" to end the conversation, or just stop talking. Say "stop" while it's working to cancel.
+
+Prefer not to leave Hands-free on? Press the mic button once to start a conversation in the same way.
+
+It pauses listening while it speaks, so it won't hear you talk over it. Use the **Stop** button, which shows up while it's working, to cut it off.
 
 To undo all of this and close Jarvis:
 
@@ -107,7 +115,7 @@ Everything personal lives in `data/`, which git ignores: memory, portfolio, cont
 - **Groq's free tier is tight.** It allows 8,000 tokens a minute and each request uses about 2,000, so busy moments can pause for several seconds. Jarvis waits and retries by itself, and tells you if the wait would be long. There's also a limit of 1,000 requests a day. Groq retires models from time to time; if yours disappears, change `GROQ_MODEL` in `.env`.
 - **Web search can get rate limited.** It scrapes DuckDuckGo's free HTML page, which blocked automated use after a few searches in quick succession during testing. Wait a minute if that happens.
 - **Stock prices** come from an unofficial Yahoo Finance endpoint. They can be delayed, and the endpoint could change without notice.
-- **Voice input** uses the browser's speech service, so it needs Chrome or Edge, internet access and the window open. If the wake word misses you while another window covers Jarvis, try it with Jarvis visible, and check the **Heard** line under the orb to see what it picked up.
+- **Voice input** uses the browser's speech service, so it needs Chrome or Edge, internet access and the window open. If it misses you while another window covers Jarvis, try it with Jarvis visible, and check the **Heard** line under the orb to see what it picked up.
 - **Windows only** for now, because the PC tools use PowerShell.
 
 ## Tests

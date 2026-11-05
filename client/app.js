@@ -1,26 +1,22 @@
 // All model, web and email text goes on the page through textContent, never
 // innerHTML, so nothing in a reply or a fetched page can run as code.
 
-import { parseWake } from './wake.js';
+import { isFiller, isGoodbye, isStopPhrase, parseWake, speechText, splitSentences } from './speech.js';
 
 const $ = (id) => document.getElementById(id);
 const orb = $('orb');
 const stateLabel = $('state');
+const heardLine = $('heard');
 const log = $('log');
 const input = $('input');
 const sendButton = $('send');
 const stopButton = $('stop');
 const micButton = $('mic');
-const wakeButton = $('wake');
+const handsFreeButton = $('wake');
 const voiceButton = $('voice');
 
-const STATE_TEXT = {
-  idle: 'Standing by',
-  listening: 'Listening',
-  thinking: 'Thinking',
-  speaking: 'Speaking',
-  attention: 'Needs your approval',
-};
+const CONVERSATION_MS = 20_000;
+const WATCHDOG_MS = 1000;
 
 const store = {
   get(key) {
@@ -33,22 +29,47 @@ const store = {
 
 let socket = null;
 let reconnectDelay = 500;
+let bootId = null;
 let busy = false;
 let currentBubble = null;
 let pendingConfirms = 0;
 
+// Reply speech
+let voiceOn = store.get('jarvis.voice') !== 'off';
+let speechQueue = [];
+let currentUtterance = null; // Held on purpose: Chrome can lose the end event of one it garbage-collects.
+let utteranceStartedAt = 0;
+let replyBuffer = '';
+let spokeThisReply = false;
+let saidWaiting = false;
+
+// Listening
+const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let handsFree = false;
+let conversationUntil = 0;
+let recognition = null;
+let listenFailures = 0;
+let retryAt = 0;
+let toldAboutFailure = false;
+
+// ---- State shown on screen
+
 function setState(name, label) {
   orb.className = `orb ${name}`;
-  stateLabel.textContent = label || STATE_TEXT[name];
+  stateLabel.textContent = label;
 }
 
+const inConversation = () => Date.now() < conversationUntil;
+const isSpeaking = () => currentUtterance !== null || speechQueue.length > 0;
+
 function refreshState() {
-  if (pendingConfirms > 0) setState('attention');
-  else if (busy) setState('thinking');
-  else if (speechSynthesis.speaking) setState('speaking');
-  else if (micActive || armed) setState('listening');
-  else if (wakeOn) setState('idle', 'Say "hey Jarvis"');
-  else setState('idle');
+  micButton.classList.toggle('active', inConversation());
+  if (pendingConfirms > 0) setState('attention', 'Needs your approval');
+  else if (busy) setState('thinking', 'Thinking');
+  else if (isSpeaking()) setState('speaking', 'Speaking');
+  else if (inConversation()) setState('listening', 'Listening, go ahead');
+  else if (handsFree) setState('idle', 'Say "hey Jarvis"');
+  else setState('idle', 'Standing by');
 }
 
 function setBusy(value) {
@@ -77,6 +98,30 @@ function addChip(text) {
   el.textContent = text;
   log.append(el);
   scrollDown();
+}
+
+function addCard(className, label, text) {
+  const card = document.createElement('section');
+  card.className = className;
+  if (label) {
+    const heading = document.createElement('strong');
+    heading.textContent = label;
+    card.append(heading);
+  }
+  card.append(document.createTextNode(text));
+  log.append(card);
+  currentBubble = null;
+  scrollDown();
+}
+
+// What the mic picked up goes on screen only. The log records events, never words.
+function report(text) {
+  console.debug(`[jarvis] ${text}`);
+  sendEvent({ type: 'client_log', text });
+}
+
+function showHeard(text) {
+  heardLine.textContent = text ? `Heard: ${text.trim()}` : '';
 }
 
 // ---- Approval cards. Click only: a voice "yes" could be the TV, or Jarvis itself.
@@ -125,7 +170,7 @@ function addConfirm({ id, title, details }) {
   currentBubble = null;
   refreshState();
   scrollDown();
-  if (voiceOn) speak('I need your approval on screen.');
+  speak('I need your approval on screen.');
 }
 
 function settleAllConfirms(message) {
@@ -144,29 +189,52 @@ function sendEvent(event) {
 
 function handleJob(event) {
   if (event.state === 'progress') return;
-  const card = document.createElement('section');
-  card.className = `job ${event.state}`;
-  const label = document.createElement('strong');
-  label.textContent = event.state === 'done' ? `Claude Code finished in ${event.folder}` : `Claude Code failed in ${event.folder}`;
-  card.append(label, document.createTextNode(event.text));
-  log.append(card);
-  scrollDown();
-  if (voiceOn) speak(event.state === 'done' ? 'Claude Code has finished. The summary is on screen.' : 'Claude Code ran into a problem. The details are on screen.');
+  const done = event.state === 'done';
+  addCard(`job ${event.state}`, `Claude Code ${done ? 'finished' : 'failed'} in ${event.folder}`, event.text);
+  speak(done ? 'Claude Code has finished. The summary is on screen.' : 'Claude Code ran into a problem. The details are on screen.');
+}
+
+function speakFinishedSentences() {
+  const { sentences, rest } = splitSentences(replyBuffer);
+  replyBuffer = rest;
+  sentences.forEach((sentence) => {
+    spokeThisReply = true;
+    speak(sentence);
+  });
+}
+
+function flushReplySpeech() {
+  speakFinishedSentences();
+  if (replyBuffer.trim()) {
+    spokeThisReply = true;
+    speak(replyBuffer);
+  }
+  replyBuffer = '';
 }
 
 function handleEvent(event) {
   switch (event.type) {
     case 'status':
+      // A new server means new code, so pick it up without anyone pressing reload.
+      if (bootId && event.boot && event.boot !== bootId) location.reload();
+      bootId = event.boot ?? bootId;
       $('brain').textContent = `${event.provider} / ${event.model}`;
       break;
     case 'delta':
       if (!currentBubble) currentBubble = addMessage('jarvis', '');
       currentBubble.textContent += event.text;
+      replyBuffer += event.text;
+      speakFinishedSentences();
       scrollDown();
       break;
     case 'tool':
+      flushReplySpeech();
       addChip(event.name.replaceAll('_', ' '));
       currentBubble = null;
+      if (event.name === 'waiting_for_the_free_limit' && !saidWaiting) {
+        saidWaiting = true;
+        speak('Give me a few seconds.');
+      }
       break;
     case 'confirm':
       addConfirm(event);
@@ -177,29 +245,28 @@ function handleEvent(event) {
     case 'job':
       handleJob(event);
       break;
-    case 'notice': {
+    case 'notice':
       // A record of anything that went through without an approval card.
-      const card = document.createElement('section');
-      card.className = 'job';
-      card.textContent = event.text;
-      log.append(card);
-      currentBubble = null;
-      scrollDown();
+      addCard('job', null, event.text);
       break;
-    }
     case 'done':
       // Replace the streamed text with the final answer, which drops any
       // "let me check" text the model wrote on the way there.
       if (currentBubble) currentBubble.textContent = event.text;
       else addMessage('jarvis', event.text);
       currentBubble = null;
+      flushReplySpeech();
+      if (!spokeThisReply) speak(event.text);
       setBusy(false);
-      if (voiceOn) speak(event.text);
+      keepConversationOpen();
       break;
     case 'error':
       addMessage('error', event.message);
       currentBubble = null;
+      replyBuffer = '';
+      if (inConversation()) speak('I hit a problem. The details are on screen.');
       setBusy(false);
+      keepConversationOpen();
       break;
   }
 }
@@ -223,19 +290,19 @@ function connect() {
 function submit(text) {
   const clean = text.trim();
   if (!clean || busy) return;
-  speechSynthesis.cancel();
+  stopSpeaking();
   if (!sendEvent({ type: 'chat', text: clean })) {
     addMessage('error', "Can't reach the Jarvis server. Is it running?");
     return;
   }
   addMessage('user', clean);
   currentBubble = null;
+  spokeThisReply = false;
+  saidWaiting = false;
   setBusy(true);
 }
 
 // ---- Speaking
-
-let voiceOn = store.get('jarvis.voice') !== 'off';
 
 function pickVoice() {
   const voices = speechSynthesis.getVoices();
@@ -249,39 +316,129 @@ function pickVoice() {
 }
 
 function speak(text) {
-  if (!text) return;
+  const clean = speechText(text || '');
+  if (!clean || !voiceOn) return;
+  speechQueue.push(clean);
   // Stop listening while talking, or Jarvis would transcribe itself.
-  pauseRecognition();
-  speechSynthesis.cancel();
+  recognition?.abort();
+  if (!currentUtterance) speakNext();
+}
+
+function speakNext() {
+  const text = speechQueue.shift();
+  if (text === undefined) {
+    currentUtterance = null;
+    keepConversationOpen();
+    refreshState();
+    ensureListening();
+    return;
+  }
   const utterance = new SpeechSynthesisUtterance(text);
   const voice = pickVoice();
   if (voice) utterance.voice = voice;
   utterance.rate = 1.05;
-  utterance.onstart = refreshState;
   const finished = () => {
-    refreshState();
-    resumeRecognition();
+    if (currentUtterance === utterance) speakNext();
   };
   utterance.onend = finished;
   utterance.onerror = finished;
+  currentUtterance = utterance;
+  utteranceStartedAt = Date.now();
   speechSynthesis.speak(utterance);
+  refreshState();
+}
+
+function stopSpeaking() {
+  speechQueue = [];
+  currentUtterance = null;
+  replyBuffer = '';
+  speechSynthesis.cancel();
+  refreshState();
+}
+
+// ---- Conversation
+
+function chime() {
+  try {
+    const audio = new AudioContext();
+    [660, 880].forEach((frequency, i) => {
+      const tone = audio.createOscillator();
+      const gain = audio.createGain();
+      gain.gain.value = 0.05;
+      tone.frequency.value = frequency;
+      tone.connect(gain).connect(audio.destination);
+      tone.start(audio.currentTime + i * 0.08);
+      tone.stop(audio.currentTime + i * 0.08 + 0.07);
+    });
+    setTimeout(() => audio.close(), 500);
+  } catch {
+    // The chime is only a nicety.
+  }
+}
+
+function startConversation() {
+  if (!inConversation()) {
+    report('conversation started');
+    chime();
+  }
+  conversationUntil = Date.now() + CONVERSATION_MS;
+  ensureListening();
+  refreshState();
+}
+
+function keepConversationOpen() {
+  if (conversationUntil) conversationUntil = Date.now() + CONVERSATION_MS;
+}
+
+function endConversation() {
+  conversationUntil = 0;
+  showHeard('');
+  report('conversation ended');
+  ensureListening();
+  refreshState();
+}
+
+function handleInterim(text) {
+  showHeard(text);
+  if (inConversation()) keepConversationOpen();
+  else if (parseWake(text)) startConversation(); // React before the sentence is even finished.
+}
+
+function handleFinal(text) {
+  showHeard(text);
+  const wake = parseWake(text);
+  if (!wake && !inConversation()) return;
+  report('speech recognised');
+  if (wake) startConversation();
+  const said = wake ? wake.command : text.trim();
+  if (!said || isFiller(said)) return;
+
+  if (busy || pendingConfirms > 0) {
+    if (isStopPhrase(said)) stopEverything();
+    return;
+  }
+  if (isGoodbye(said)) {
+    endConversation();
+    speak('Anytime.');
+    return;
+  }
+  if (isStopPhrase(said)) {
+    stopSpeaking();
+    return;
+  }
+  keepConversationOpen();
+  submit(said);
+}
+
+function stopEverything() {
+  sendEvent({ type: 'stop' });
+  stopSpeaking();
+  settleAllConfirms('Stopped');
+  currentBubble = null;
+  setBusy(false);
 }
 
 // ---- Listening
-
-const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-const ARM_WINDOW_MS = 8000;
-const heardLine = $('heard');
-
-// What the mic picked up goes on screen only. The log records events, never words.
-function report(text) {
-  console.debug(`[jarvis] ${text}`);
-  sendEvent({ type: 'client_log', text });
-}
-
-function showHeard(text) {
-  heardLine.textContent = text ? `Heard: ${text.trim()}` : '';
-}
 
 function recognitionLanguage() {
   // Browsers report either name for the same timezone.
@@ -289,125 +446,87 @@ function recognitionLanguage() {
   return navigator.language || 'en-US';
 }
 
-let recognition = null;
-let micActive = false;   // one-shot, from the mic button
-let wakeOn = false;      // continuous, listening for the wake phrase
-let armed = false;       // heard "jarvis", waiting for the actual request
-let armTimer = null;
-let wakeFailures = 0;
+const shouldListen = () => (handsFree || inConversation()) && !isSpeaking();
 
-function setArmed(value) {
-  armed = value;
-  clearTimeout(armTimer);
-  if (value) armTimer = setTimeout(() => setArmed(false), ARM_WINDOW_MS);
-  refreshState();
-}
-
-function handleTranscript(text) {
-  if (micActive) {
-    stopRecognition();
-    submit(text);
+// The one place that decides whether the mic is on. Everything calls this, and so
+// does the watchdog, so no lost browser event can leave Jarvis deaf.
+function ensureListening() {
+  if (!Recognition) return;
+  if (!shouldListen()) {
+    recognition?.abort();
     return;
   }
-  const wake = parseWake(text);
-  if (wake) {
-    report('wake phrase detected');
-    if (wake.command) {
-      setArmed(false);
-      submit(wake.command);
-    } else {
-      setArmed(true);
-    }
-  } else if (armed) {
-    setArmed(false);
-    submit(text);
-  }
+  if (recognition || Date.now() < retryAt) return;
+  startRecognizer();
 }
 
-function startRecognition(continuous) {
-  if (!Recognition || recognition) return;
+function startRecognizer() {
   const rec = new Recognition();
   rec.lang = recognitionLanguage();
-  rec.continuous = continuous;
+  rec.continuous = true;
   rec.interimResults = true;
-  rec.onstart = () => report(`listening (${continuous ? 'wake word' : 'mic button'}, ${rec.lang}, page ${document.visibilityState})`);
   rec.onresult = (event) => {
-    wakeFailures = 0;
+    listenFailures = 0;
+    retryAt = 0;
+    toldAboutFailure = false;
     for (let i = event.resultIndex; i < event.results.length; i++) {
       const { transcript } = event.results[i][0];
-      showHeard(transcript);
-      if (event.results[i].isFinal) {
-        report('speech recognised');
-        handleTranscript(transcript);
-      } else if (parseWake(transcript)) {
-        setState('listening'); // Instant feedback, before the sentence is finished.
-      }
+      if (event.results[i].isFinal) handleFinal(transcript);
+      else handleInterim(transcript);
     }
   };
   rec.onerror = (event) => {
-    report(`recognition error: ${event.error}, page ${document.visibilityState}`);
+    // no-speech happens every few seconds of silence, and aborted is usually Jarvis itself.
     if (event.error === 'no-speech' || event.error === 'aborted') return;
-    wakeFailures++;
-    if (event.error === 'audio-capture') {
-      addMessage('error', "Chrome can't get audio from your microphone. Check that it isn't muted or in use by another app.");
-      setWake(false);
-      return;
-    }
+    report(`recognition error: ${event.error}, page ${document.visibilityState}`);
     if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
       addMessage('error', 'Microphone access is blocked. Allow it in the browser and try again.');
-      setWake(false);
-    } else if (wakeFailures >= 3) {
-      addMessage('error', `Speech recognition keeps failing (${event.error}). It needs Chrome or Edge and an internet connection.`);
-      setWake(false);
+      conversationUntil = 0;
+      setHandsFree(false);
+      return;
+    }
+    // Keep trying with growing gaps, so a Wi-Fi blip doesn't switch voice off for good.
+    listenFailures++;
+    retryAt = Date.now() + Math.min(1000 * 2 ** listenFailures, 15_000);
+    if (listenFailures >= 3 && !toldAboutFailure) {
+      toldAboutFailure = true;
+      addMessage('error', event.error === 'audio-capture'
+        ? "Chrome can't get audio from your microphone. Check it isn't muted or in use by another app."
+        : `Voice keeps failing (${event.error}). It needs an internet connection. I'll keep trying.`);
     }
   };
   rec.onend = () => {
-    report(`stopped listening, page ${document.visibilityState}`);
-    recognition = null;
-    if (micActive) {
-      micActive = false;
-      micButton.classList.remove('active');
-    }
-    refreshState();
-    resumeRecognition();
+    // An old recognizer ending must not wipe out its replacement.
+    if (recognition === rec) recognition = null;
+    ensureListening();
   };
   recognition = rec;
   try {
     rec.start();
   } catch {
     recognition = null;
+    retryAt = Date.now() + 1000;
   }
 }
 
-function stopRecognition() {
-  micActive = false;
-  micButton.classList.remove('active');
-  recognition?.stop();
+function watchdog() {
+  // Chrome sometimes never reports that speech ended. Don't wait forever.
+  if (currentUtterance && !speechSynthesis.speaking && !speechSynthesis.pending && Date.now() - utteranceStartedAt > 1000) {
+    report('speech end event lost');
+    speakNext();
+  }
+  if (busy || isSpeaking() || pendingConfirms > 0) keepConversationOpen();
+  else if (conversationUntil && !inConversation()) endConversation();
+  ensureListening();
   refreshState();
 }
 
-function pauseRecognition() {
-  recognition?.abort();
-}
-
-function resumeRecognition() {
-  // The browser ends recognition by itself every so often. Keep it going in wake mode.
-  if (wakeOn && !recognition && !micActive && !speechSynthesis.speaking) {
-    setTimeout(() => {
-      if (wakeOn && !recognition && !speechSynthesis.speaking) startRecognition(true);
-    }, 250 * (wakeFailures + 1));
-  }
-}
-
-function setWake(value) {
-  wakeOn = value;
-  wakeButton.setAttribute('aria-pressed', String(value));
+function setHandsFree(value) {
+  handsFree = value;
+  handsFreeButton.setAttribute('aria-pressed', String(value));
   store.set('jarvis.wake', value ? 'on' : 'off');
-  if (value) startRecognition(true);
-  else {
-    setArmed(false);
-    recognition?.abort();
-  }
+  report(`hands-free ${value ? 'on' : 'off'}`);
+  ensureListening();
   refreshState();
 }
 
@@ -420,34 +539,27 @@ $('form').addEventListener('submit', (event) => {
   input.focus();
 });
 
-stopButton.addEventListener('click', () => {
-  sendEvent({ type: 'stop' });
-  speechSynthesis.cancel();
-  settleAllConfirms('Stopped');
-  currentBubble = null;
-  setBusy(false);
-});
+stopButton.addEventListener('click', stopEverything);
 
+// One press starts a whole conversation. There's nothing to press again.
 micButton.addEventListener('click', () => {
-  if (micActive) return stopRecognition();
-  speechSynthesis.cancel();
-  // The recognizer in use may be the wake-word one; swap it for a one-shot.
-  recognition?.abort();
-  recognition = null;
-  micActive = true;
-  micButton.classList.add('active');
-  refreshState();
-  startRecognition(false);
+  if (inConversation()) {
+    stopSpeaking();
+    endConversation();
+  } else {
+    stopSpeaking();
+    startConversation();
+  }
 });
 
-wakeButton.addEventListener('click', () => setWake(!wakeOn));
+handsFreeButton.addEventListener('click', () => setHandsFree(!handsFree));
 
 voiceButton.setAttribute('aria-pressed', String(voiceOn));
 voiceButton.addEventListener('click', () => {
   voiceOn = !voiceOn;
   voiceButton.setAttribute('aria-pressed', String(voiceOn));
   store.set('jarvis.voice', voiceOn ? 'on' : 'off');
-  if (!voiceOn) speechSynthesis.cancel();
+  if (!voiceOn) stopSpeaking();
 });
 
 $('clear').addEventListener('click', () => {
@@ -456,17 +568,19 @@ $('clear').addEventListener('click', () => {
   currentBubble = null;
 });
 
-if (!Recognition) {
-  micButton.disabled = true;
-  wakeButton.disabled = true;
-  micButton.title = wakeButton.title = 'Voice input needs Chrome or Edge';
-} else if (store.get('jarvis.wake') === 'on') {
-  setWake(true);
-}
-
 document.addEventListener('visibilitychange', () => report(`page ${document.visibilityState}`));
 
 speechSynthesis.getVoices(); // Voices load lazily in some browsers.
-refreshState();
 connect();
+
+if (!Recognition) {
+  micButton.disabled = true;
+  handsFreeButton.disabled = true;
+  micButton.title = handsFreeButton.title = 'Voice input needs Chrome or Edge';
+} else if (store.get('jarvis.wake') === 'on') {
+  setHandsFree(true);
+}
+
+refreshState();
+setInterval(watchdog, WATCHDOG_MS);
 input.focus();

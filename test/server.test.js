@@ -142,6 +142,24 @@ test('creates a new file anywhere without asking, and shows a record', async () 
   client.close();
 });
 
+test('creates folders without asking, even after reading outside content', async () => {
+  const nested = path.join(tempDir(), 'projects', 'todo', 'src');
+  fs.writeFileSync(path.join(filesDir, 'note.txt'), 'some outside content');
+  const client = await connect(PORT);
+  llm.script.push(callTool('read_file', { path: 'note.txt' }), callTool('create_folder', { path: nested }), say('Made it.'));
+  client.chat('make a folder');
+  assert.ok((await client.next('notice')).text.includes(nested));
+  await client.next('done');
+  assert.ok(fs.statSync(nested).isDirectory());
+
+  // A folder that already exists isn't an error.
+  llm.script.push(callTool('create_folder', { path: nested }), say('Already there.'));
+  client.chat('make it again');
+  await client.next('done');
+  assert.match(lastToolResult(), /Created/);
+  client.close();
+});
+
 test('changing an existing file always asks, and denying leaves it alone', async () => {
   const file = path.join(tempDir(), 'keep.txt');
   fs.writeFileSync(file, 'original');

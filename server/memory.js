@@ -1,7 +1,9 @@
 import { readJson, writeJson } from './store.js';
 
 const FILE = 'memory.json';
-const MAX_HISTORY_TURNS = 10;
+// Every saved turn is resent on each request, and free tiers limit tokens per minute.
+const MAX_HISTORY_TURNS = 6;
+const MAX_SAVED_CHARS = 500;
 
 const load = () => readJson(FILE, { facts: [], history: [] });
 
@@ -10,7 +12,10 @@ export const getHistory = () => load().history;
 
 export function addTurn(user, assistant) {
   const memory = load();
-  memory.history.push({ role: 'user', content: user }, { role: 'assistant', content: assistant });
+  memory.history.push(
+    { role: 'user', content: user.slice(0, MAX_SAVED_CHARS) },
+    { role: 'assistant', content: assistant.slice(0, MAX_SAVED_CHARS) }
+  );
   memory.history = memory.history.slice(-MAX_HISTORY_TURNS * 2);
   writeJson(FILE, memory);
 }
