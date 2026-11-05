@@ -68,8 +68,7 @@ if ($window) {
         '--no-first-run',
         '--no-default-browser-check',
         '--autoplay-policy=no-user-gesture-required',
-        # Stop Chrome slowing the page down in the background. Speech recognition
-        # can still pause while the window is hidden; see Known limits in the README.
+        # Stop Chrome slowing the page down while it's in the background.
         '--disable-features=CalculateNativeWinOcclusion',
         '--disable-backgrounding-occluded-windows',
         '--disable-renderer-backgrounding',

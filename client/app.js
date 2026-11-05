@@ -274,7 +274,8 @@ function showHeard(text) {
 }
 
 function recognitionLanguage() {
-  if (Intl.DateTimeFormat().resolvedOptions().timeZone === 'Asia/Kolkata') return 'en-IN';
+  // Browsers report either name for the same timezone.
+  if (['Asia/Kolkata', 'Asia/Calcutta'].includes(Intl.DateTimeFormat().resolvedOptions().timeZone)) return 'en-IN';
   return navigator.language || 'en-US';
 }
 

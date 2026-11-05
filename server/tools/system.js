@@ -1,9 +1,20 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { FILES_DIR } from '../config.js';
 import { runPowerShell, startDetached } from '../powershell.js';
 
-// Harmless apps open straight away. Anything else asks first, because the model
-// may be acting on a web page or email that's trying to trick it.
+// Installed apps open straight away. Anything else, such as an .exe path, asks first,
+// because the model may be acting on a web page or email that's trying to trick it.
 const KNOWN_APPS = {
+  excel: 'excel.exe',
+  'microsoft excel': 'excel.exe',
+  word: 'winword.exe',
+  'microsoft word': 'winword.exe',
+  powerpoint: 'powerpnt.exe',
+  'microsoft powerpoint': 'powerpnt.exe',
+  outlook: 'outlook.exe',
+  'microsoft outlook': 'outlook.exe',
+  onenote: 'onenote.exe',
   notepad: 'notepad.exe',
   calculator: 'calc.exe',
   calc: 'calc.exe',
@@ -21,7 +32,31 @@ const KNOWN_APPS = {
   settings: 'ms-settings:',
 };
 
-const knownApp = (name) => KNOWN_APPS[name.trim().toLowerCase()];
+function startMenuFolders() {
+  return [process.env.ProgramData, process.env.APPDATA]
+    .filter(Boolean)
+    .map((base) => path.join(base, 'Microsoft', 'Windows', 'Start Menu', 'Programs'));
+}
+
+// Finds an installed app's Start Menu shortcut by its exact name. Launching one
+// passes no arguments, so a shortcut can only start the app as you'd start it yourself.
+export function findStartMenuApp(name, folders = startMenuFolders()) {
+  const wanted = `${String(name).trim().toLowerCase()}.lnk`;
+  if (wanted.startsWith('uninstall')) return null;
+  for (const folder of folders) {
+    let entries;
+    try {
+      entries = fs.readdirSync(folder, { recursive: true, withFileTypes: true });
+    } catch {
+      continue; // This Start Menu folder doesn't exist or can't be read.
+    }
+    const match = entries.find((e) => e.isFile() && e.name.toLowerCase() === wanted);
+    if (match) return path.join(match.parentPath, match.name);
+  }
+  return null;
+}
+
+const knownApp = (name) => KNOWN_APPS[name.trim().toLowerCase()] || findStartMenuApp(name);
 
 export function parseWebUrl(value) {
   let url;

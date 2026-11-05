@@ -93,6 +93,25 @@ test('the wake phrase survives mishearing without firing on ordinary talk', asyn
   assert.equal(parseWake('the davis cup is on'), null);
 });
 
+test('installed apps open without asking, and anything else still asks', async () => {
+  const system = await import('../server/tools/system.js');
+  const openApp = system.default.find((t) => t.name === 'open_app');
+
+  const menu = tempDir();
+  fs.mkdirSync(path.join(menu, 'Vendor'));
+  fs.writeFileSync(path.join(menu, 'Vendor', 'Some App.lnk'), '');
+  fs.writeFileSync(path.join(menu, 'Vendor', 'Uninstall Some App.lnk'), '');
+  assert.equal(system.findStartMenuApp('some app', [menu]), path.join(menu, 'Vendor', 'Some App.lnk'));
+  assert.equal(system.findStartMenuApp('Uninstall Some App', [menu]), null);
+  assert.equal(system.findStartMenuApp('app', [menu]), null, 'names must match exactly');
+  assert.equal(system.findStartMenuApp('..\\Vendor\\Some App', [menu]), null);
+
+  assert.equal(openApp.confirm({ name: 'Excel' }), null);
+  assert.equal(openApp.confirm({ name: 'word' }), null);
+  assert.ok(openApp.confirm({ name: 'C:\\Users\\Public\\payload.exe' }), 'an unknown program must ask');
+  assert.ok(openApp.confirm({ name: 'totally-unknown-program' }), 'an unknown name must ask');
+});
+
 test('email headers cannot be injected', () => {
   const raw = email.buildRawMessage({
     to: 'a@example.com\r\nBcc: evil@example.com',
