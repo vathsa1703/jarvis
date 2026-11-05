@@ -10,8 +10,8 @@ const VALID_MODES = new Set(['default', 'acceptEdits', 'plan']);
 
 const loadProjects = () => readJson(PROJECTS_FILE, {});
 
-// Accepts a saved project name or a real path. Always returns an existing folder.
-export function resolveFolder(nameOrPath) {
+// Accepts a saved project name or a full path. The folder may not exist yet.
+function folderTarget(nameOrPath) {
   const value = String(nameOrPath).trim();
   const projects = loadProjects();
   const key = Object.keys(projects).find((k) => k.toLowerCase() === value.toLowerCase());
@@ -19,10 +19,15 @@ export function resolveFolder(nameOrPath) {
   if (!path.isAbsolute(folder)) {
     throw new Error(`"${value}" isn't a saved project or a full folder path. Ask the user for the path.`);
   }
+  return path.resolve(folder);
+}
+
+export function resolveFolder(nameOrPath) {
+  const folder = folderTarget(nameOrPath);
   if (!fs.statSync(folder, { throwIfNoEntry: false })?.isDirectory()) {
     throw new Error(`The folder ${folder} doesn't exist.`);
   }
-  return path.resolve(folder);
+  return folder;
 }
 
 // Windows PowerShell 5.1 mangles embedded double quotes when it calls a program,
@@ -44,13 +49,23 @@ function childEnv(folder, prompt) {
   return { JARVIS_CWD: folder, JARVIS_PROMPT: prompt, CLAUDECODE: undefined };
 }
 
+// The single quotes matter: the new window is the one that expands $env:JARVIS_PROMPT.
+const terminalScript = (claudeCommand) =>
+  `Start-Process powershell.exe -WorkingDirectory $env:JARVIS_CWD -ArgumentList '-NoExit','-Command','${claudeCommand} $env:JARVIS_PROMPT'`;
+
 async function launchVisible(folder, prompt) {
-  // The single quotes matter: the new window is the one that expands $env:JARVIS_PROMPT.
-  const script =
-    "Start-Process powershell.exe -WorkingDirectory $env:JARVIS_CWD -ArgumentList '-NoExit','-Command','claude $env:JARVIS_PROMPT'";
-  const { code, stderr } = await runPowerShell(script, { env: childEnv(folder, prompt), timeoutMs: 15_000 });
+  const { code, stderr } = await runPowerShell(terminalScript('claude'), { env: childEnv(folder, prompt), timeoutMs: 15_000 });
   if (code !== 0) throw new Error(`Couldn't open a Claude window: ${stderr.trim()}`);
   return `Opened a Claude Code window in ${folder}. It's working on the task there.`;
+}
+
+// Claude runs in a terminal connected to VS Code with --ide. The VS Code extension's own
+// link appears only to fill in a prompt, which wouldn't start the work by itself.
+async function launchInVsCode(folder, prompt) {
+  const script = `code $env:JARVIS_CWD; Start-Sleep -Seconds 3; ${terminalScript('claude --ide')}`;
+  const { code, stderr } = await runPowerShell(script, { env: childEnv(folder, prompt), timeoutMs: 30_000 });
+  if (code !== 0) throw new Error(`Couldn't open VS Code and Claude: ${stderr.trim()}`);
+  return `Opened ${folder} in VS Code and started Claude Code on the task, connected to VS Code.`;
 }
 
 function startHeadless(folder, prompt, notify) {
@@ -107,26 +122,33 @@ export default [
   {
     name: 'ask_claude',
     description:
-      'Hand a coding or build task to Claude Code, working in a folder on this PC. Pass the user\'s request in full. ' +
-      'mode "visible" (the default) opens a terminal window the user can watch and steer. ' +
-      'mode "headless" runs in the background and reports back when finished.',
+      'Hand a coding or build task to Claude Code in a folder on this PC, creating the folder if needed. Pass the user\'s request in full. ' +
+      'mode "vscode" (the default) opens the folder in VS Code and starts Claude Code connected to it, so call this alone for requests like "open this folder in VS Code and ask Claude to build X". ' +
+      'mode "visible" opens only a terminal window. mode "headless" runs in the background and reports back when finished.',
     parameters: {
       type: 'object',
       properties: {
         folder: { type: 'string', description: 'Saved project name or full path' },
         prompt: { type: 'string', description: 'What Claude Code should do' },
-        mode: { type: 'string', enum: ['visible', 'headless'] },
+        mode: { type: 'string', enum: ['vscode', 'visible', 'headless'] },
       },
       required: ['folder', 'prompt'],
     },
-    confirm: ({ folder, prompt, mode }) => ({
-      title: 'Ask Claude Code to do this?',
-      details: `Folder: ${resolveFolder(folder)}\nMode: ${mode === 'headless' ? 'background' : 'visible window'}\n\n${sanitizePrompt(prompt)}`,
-    }),
-    run: async ({ folder, prompt, mode }, ctx) => {
-      const target = resolveFolder(folder);
+    confirm: ({ folder, prompt, mode }, ctx) => {
+      const target = folderTarget(folder);
       const clean = sanitizePrompt(prompt);
-      return mode === 'headless' ? startHeadless(target, clean, ctx.notify) : launchVisible(target, clean);
+      if (!ctx.readOutsideContent) return null;
+      return {
+        title: 'Jarvis read outside content for this request. Ask Claude Code to do this?',
+        details: `Folder: ${target}\nMode: ${mode || 'vscode'}\n\n${clean}`,
+      };
+    },
+    run: async ({ folder, prompt, mode }, ctx) => {
+      const target = folderTarget(folder);
+      const clean = sanitizePrompt(prompt);
+      fs.mkdirSync(target, { recursive: true });
+      if (mode === 'headless') return startHeadless(target, clean, ctx.notify);
+      return mode === 'visible' ? launchVisible(target, clean) : launchInVsCode(target, clean);
     },
   },
   {

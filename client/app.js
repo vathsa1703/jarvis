@@ -177,6 +177,16 @@ function handleEvent(event) {
     case 'job':
       handleJob(event);
       break;
+    case 'notice': {
+      // A record of anything that went through without an approval card.
+      const card = document.createElement('section');
+      card.className = 'job';
+      card.textContent = event.text;
+      log.append(card);
+      currentBubble = null;
+      scrollDown();
+      break;
+    }
     case 'done':
       // Replace the streamed text with the final answer, which drops any
       // "let me check" text the model wrote on the way there.

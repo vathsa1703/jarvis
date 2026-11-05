@@ -97,6 +97,7 @@ wss.on('connection', (socket) => {
         signal: abort.signal,
         confirm,
         notify: broadcast,
+        notice: (text) => send(socket, { type: 'notice', text }),
         onDelta: (delta) => send(socket, { type: 'delta', text: delta }),
         onTool: (name) => send(socket, { type: 'tool', name }),
       });

@@ -10,8 +10,8 @@ A personal, voice-driven assistant for your Windows PC that costs nothing to run
 | "How's my portfolio doing?" | Live prices, gain or loss and day change, from Yahoo Finance |
 | "Look up the best budget laptops" | Searches the web and summarizes |
 | "Read my latest emails" | Reads your Gmail |
-| "Mail Rahul that I'll be late" | Drafts it and shows you. It sends only after you approve |
-| "Open my website folder and ask Claude to add dark mode" | Launches Claude Code in that folder, after you approve |
+| "Mail Rahul that I'll be late" | Sends it and shows you a copy |
+| "Open my website folder in VS Code and ask Claude to add dark mode" | Opens VS Code and starts Claude Code on the task, connected to VS Code |
 | "Find my resume and open it" | Searches your PC and opens the file |
 | "What's in my Downloads folder?" | Lists any folder on your PC |
 | "Open Notepad" / "Open youtube.com" | Opens it |
@@ -69,7 +69,8 @@ Set `LLM_PROVIDER` in `.env` and restart.
 
 This needs the [Claude Code](https://claude.com/claude-code) CLI installed and signed in. Usage counts against your own Claude plan, so this one feature isn't free beyond what your plan includes.
 
-- **Visible (default):** opens a terminal window you can watch and steer.
+- **VS Code (default):** opens the folder in VS Code, then starts Claude Code in a terminal connected to it. Claude Code still asks its own permission questions in that terminal, and asks you to trust a folder it hasn't seen before.
+- **Visible:** opens only a terminal window you can watch and steer.
 - **Background:** runs out of sight and reports back when it's finished. By default it can't edit files, because nobody is there to approve the prompts. Set `CLAUDE_HEADLESS_PERMISSION_MODE=acceptEdits` in `.env` to let it.
 
 Say "save D:\projects\site as my website" to give a folder a short name.
@@ -92,10 +93,11 @@ Tell Jarvis "add 10 TCS at 3000", or edit `data/portfolio.json`. Symbols follow 
 
 Jarvis reads web pages and emails, and any of those could contain text trying to trick it. So:
 
-- **Risky actions need your click.** Sending email, running commands, writing files, launching Claude Code, opening unknown programs and removing holdings all show exactly what will happen first. Voice can't approve them, and no answer within 5 minutes counts as no.
+- **Risky actions need your click.** Running commands, changing existing files, opening unknown programs and removing holdings all show exactly what will happen first. Voice can't approve them, and no answer within 5 minutes counts as no.
+- **Everyday actions go straight through, with one exception.** Sending email, creating new files and launching Claude Code don't ask, unless Jarvis read a web page, email, file or command output in that same request. That's when hidden instructions could be steering it, so it shows you first. Sent emails appear on screen as a record. New files that could run by themselves, such as scripts or startup items, always ask.
 - **Web, email and file content is labelled as untrusted** when it reaches the model. This lowers the risk but can't remove it, so read approval cards before you click.
 - **It only listens on your own machine**, and refuses connections from other websites.
-- **File tools reach your whole PC.** Browsing, searching and reading are immediate, but creating or changing a file needs a click, and so does reading anything likely to hold secrets: SSH and cloud keys, browser profiles, `.env` files, credential files and Jarvis's own data. Files Jarvis reads go to your AI provider unless you use `ollama`.
+- **File tools reach your whole PC.** Browsing, searching and reading are immediate, but changing a file needs a click, and so does reading anything likely to hold secrets: SSH and cloud keys, browser profiles, `.env` files, credential files and Jarvis's own data. Files Jarvis reads go to your AI provider unless you use `ollama`.
 - **Web fetching can't reach private addresses**, such as your router.
 
 Everything personal lives in `data/`, which git ignores: memory, portfolio, contacts and your Gmail token. These files aren't encrypted, so anything running as your Windows user can read them.

@@ -22,6 +22,11 @@ const SENSITIVE_PATTERNS = [
   /\/(id_rsa|id_ed25519|id_ecdsa|\.netrc|\.npmrc|\.pypirc|\.git-credentials|credentials|credentials\.json|secrets\.json|token\.json|wallet\.dat)$/,
 ];
 
+// New files go straight through, unless they could run by themselves later:
+// startup items, app settings and hooks, or programs and scripts.
+const RISKY_TO_CREATE =
+  /\/appdata\/roaming\/|\/\.(claude|vscode|git)\/|\.(exe|bat|cmd|ps1|psm1|vbs|vbe|wsf|hta|scr|lnk|msi|reg)$/;
+
 // Skipped when searching, because they're huge and full of files nobody means.
 const SKIP_FOLDERS = new Set([
   'node_modules', '.git', 'appdata', '$recycle.bin', 'windows',
@@ -120,6 +125,7 @@ export default [
       return `${target}\n${entries.map((e) => (e.isDirectory() ? `${e.name}/` : e.name)).join('\n')}`;
     },
     untrusted: true,
+    outsideContent: false, // Only names, so "find my resume and mail Rahul" stays one step.
   },
   {
     name: 'find_files',
@@ -134,6 +140,7 @@ export default [
     },
     run: ({ name, folder }) => findFiles(name, folder),
     untrusted: true,
+    outsideContent: false,
   },
   {
     name: 'read_file',
@@ -156,7 +163,7 @@ export default [
   },
   {
     name: 'write_file',
-    description: 'Create or overwrite a text file anywhere on this PC. The user must approve it.',
+    description: 'Create a text file anywhere on this PC, or overwrite one. Changing an existing file needs the user\'s approval.',
     parameters: {
       type: 'object',
       properties: {
@@ -165,18 +172,23 @@ export default [
       },
       required: ['path', 'content'],
     },
-    confirm: async ({ path: file, content }) => {
+    confirm: async ({ path: file, content }, ctx) => {
       const target = resolvePath(file);
+      const details = `${target}\n\n${content}`;
       const exists = await fs.stat(target).then(() => true, () => false);
-      return {
-        title: exists ? 'Overwrite this file?' : 'Create this file?',
-        details: `${target}\n\n${content}`,
-      };
+      if (exists) return { title: 'Change this existing file?', details };
+      const risky = (await isSensitive(target)) || RISKY_TO_CREATE.test(normalize(await realLocation(target)));
+      if (risky) return { title: 'This file could run by itself or hold secrets. Create it?', details };
+      if (ctx.readOutsideContent) return { title: 'Jarvis read outside content for this request. Create this file?', details };
+      return null;
     },
-    run: async ({ path: file, content }) => {
+    run: async ({ path: file, content }, ctx) => {
       const target = resolvePath(file);
       await fs.mkdir(path.dirname(target), { recursive: true });
-      await fs.writeFile(target, content);
+      // Unapproved writes can only create. "wx" fails rather than overwrite a file
+      // that appeared after the check above.
+      await fs.writeFile(target, content, { flag: ctx.approved ? 'w' : 'wx' });
+      ctx.notice?.(`Saved ${target}`);
       return `Wrote ${target}.`;
     },
   },

@@ -51,11 +51,14 @@ export async function executeTool(name, rawArguments, ctx) {
   if (missing.length) return `Error: ${name} needs: ${missing.join(', ')}.`;
 
   try {
-    const request = tool.confirm ? await tool.confirm(args) : null;
+    const request = tool.confirm ? await tool.confirm(args, ctx) : null;
     if (request && !(await ctx.confirm(request))) {
       return 'The user declined this action, so it did not happen. Do not retry it unless they ask.';
     }
-    return formatResult(tool, await tool.run(args, ctx));
+    // From here on this request may be steered by outside content, so sending mail,
+    // creating files and launching Claude ask first instead of going straight through.
+    if (tool.untrusted && tool.outsideContent !== false) ctx.readOutsideContent = true;
+    return formatResult(tool, await tool.run(args, { ...ctx, approved: Boolean(request) }));
   } catch (err) {
     return `Error: ${err.message}`;
   }

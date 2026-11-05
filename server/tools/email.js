@@ -153,7 +153,7 @@ export function resolveRecipient(nameOrAddress) {
 export default [
   {
     name: 'send_email',
-    description: 'Send an email from the user\'s Gmail. The user sees the draft and must approve it.',
+    description: 'Send an email from the user\'s Gmail. It goes out immediately, and the user sees a copy on screen.',
     parameters: {
       type: 'object',
       properties: {
@@ -163,17 +163,22 @@ export default [
       },
       required: ['to', 'subject', 'body'],
     },
-    confirm: ({ to, subject, body }) => ({
-      title: 'Send this email?',
-      details: `To: ${resolveRecipient(to)}\nSubject: ${singleLine(subject)}\n\n${body}`,
-    }),
-    run: async ({ to, subject, body }) => {
+    confirm: ({ to, subject, body }, ctx) => {
+      const address = resolveRecipient(to); // An unknown name fails here, whichever path it takes.
+      if (!ctx.readOutsideContent) return null;
+      return {
+        title: 'Jarvis read outside content for this request. Send this email?',
+        details: `To: ${address}\nSubject: ${singleLine(subject)}\n\n${body}`,
+      };
+    },
+    run: async ({ to, subject, body }, ctx) => {
       const address = resolveRecipient(to);
       await gmail('/messages/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ raw: buildRawMessage({ to: address, subject, body }) }),
       });
+      ctx.notice?.(`Email sent to ${address}\nSubject: ${singleLine(subject)}\n\n${body}`);
       return `Email sent to ${address}.`;
     },
   },
