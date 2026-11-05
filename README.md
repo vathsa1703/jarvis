@@ -12,6 +12,8 @@ A personal, voice-driven assistant for your Windows PC that costs nothing to run
 | "Read my latest emails" | Reads your Gmail |
 | "Mail Rahul that I'll be late" | Drafts it and shows you. It sends only after you approve |
 | "Open my website folder and ask Claude to add dark mode" | Launches Claude Code in that folder, after you approve |
+| "Find my resume and open it" | Searches your PC and opens the file |
+| "What's in my Downloads folder?" | Lists any folder on your PC |
 | "Open Notepad" / "Open youtube.com" | Opens it |
 | "Run git status in PowerShell" | Runs it, after you approve |
 | "Remember that I prefer short answers" | Remembers it across restarts |
@@ -32,6 +34,24 @@ npm start
 ```
 
 Open http://localhost:3000. Use the mic button to talk, or turn on **Wake word** and say "hey Jarvis".
+
+## Always on
+
+To have Jarvis waiting whenever you log in or unlock your laptop:
+
+```powershell
+npm run autostart
+```
+
+This adds a scheduled task for your Windows user, with no admin rights needed. At every login and unlock it starts the server in the background if it isn't running, then opens the Jarvis window or brings it to the front.
+
+In the Jarvis window, click **Wake word** and allow the microphone. It stays on from then on, so "hey Jarvis" works hands-free while the window is open. While the wake word is on, the browser sends what the mic hears to its speech service (Google, in Chrome) to find the phrase.
+
+To undo all of this and close Jarvis:
+
+```powershell
+npm run autostart:off
+```
 
 ## Choosing a brain
 
@@ -75,13 +95,14 @@ Jarvis reads web pages and emails, and any of those could contain text trying to
 - **Risky actions need your click.** Sending email, running commands, writing files, launching Claude Code, opening unknown programs and removing holdings all show exactly what will happen first. Voice can't approve them, and no answer within 5 minutes counts as no.
 - **Web, email and file content is labelled as untrusted** when it reaches the model. This lowers the risk but can't remove it, so read approval cards before you click.
 - **It only listens on your own machine**, and refuses connections from other websites.
-- **File tools can't leave one folder** (`data/workspace`, or `JARVIS_FILES_DIR`).
+- **File tools reach your whole PC.** Browsing, searching and reading are immediate, but creating or changing a file needs a click, and so does reading anything likely to hold secrets: SSH and cloud keys, browser profiles, `.env` files, credential files and Jarvis's own data. Files Jarvis reads go to your AI provider unless you use `ollama`.
 - **Web fetching can't reach private addresses**, such as your router.
 
 Everything personal lives in `data/`, which git ignores: memory, portfolio, contacts and your Gmail token. These files aren't encrypted, so anything running as your Windows user can read them.
 
 ## Known limits
 
+- **Groq's free tier is tight.** It allows 8,000 tokens a minute and each request uses about 2,000, so busy moments can pause for several seconds. Jarvis waits and retries by itself, and tells you if the wait would be long. There's also a limit of 1,000 requests a day. Groq retires models from time to time; if yours disappears, change `GROQ_MODEL` in `.env`.
 - **Web search can get rate limited.** It scrapes DuckDuckGo's free HTML page, which blocked automated use after a few searches in quick succession during testing. Wait a minute if that happens.
 - **Stock prices** come from an unofficial Yahoo Finance endpoint. They can be delayed, and the endpoint could change without notice.
 - **Voice input** uses the browser's speech service, so it needs Chrome or Edge, internet access and the tab open.
@@ -97,7 +118,7 @@ The tests run the real server against a scripted fake LLM, so they need no API k
 
 ## Roadmap
 
-- [ ] Always-on: tray app, start at login, global hotkey
+- [ ] Global hotkey and tray icon
 - [ ] Offline voice: Whisper and Piper
 - [ ] A more reliable free search provider
 - [ ] Morning briefing, reminders, and media and system controls

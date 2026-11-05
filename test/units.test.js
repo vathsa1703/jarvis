@@ -5,6 +5,7 @@ import { before, test } from 'node:test';
 import { tempDir } from './helpers.js';
 
 process.env.JARVIS_DATA_DIR = tempDir();
+process.env.JARVIS_FILES_DIR = tempDir();
 
 let files, web, portfolio, email, claude, llm;
 before(async () => {
@@ -16,25 +17,66 @@ before(async () => {
   llm = await import('../server/llm.js');
 });
 
-test('file tools refuse paths outside the sandbox', async () => {
-  await assert.rejects(files.safePath('../secret.txt'), /outside/);
-  await assert.rejects(files.safePath('..\\..\\secret.txt'), /outside/);
-  await assert.rejects(files.safePath('C:\\Windows\\win.ini'), /outside/);
-  await assert.ok(await files.safePath('notes/new.txt'));
+test('paths resolve anywhere on the PC', async () => {
+  const os = await import('node:os');
+  assert.equal(files.resolvePath('C:\\Windows\\win.ini'), 'C:\\Windows\\win.ini');
+  assert.equal(files.resolvePath('~/Desktop'), path.join(os.homedir(), 'Desktop'));
+  assert.equal(files.resolvePath('~'), os.homedir());
+  assert.equal(files.resolvePath('notes.txt'), path.join(process.env.JARVIS_FILES_DIR, 'notes.txt'));
 });
 
-test('file tools refuse to follow a link out of the sandbox', async (t) => {
-  const { FILES_DIR } = await import('../server/config.js');
+test('secrets are recognised as sensitive, and ordinary files are not', async () => {
+  const home = 'C:\\Users\\someone';
+  for (const file of [
+    `${home}\\.ssh\\id_ed25519`,
+    `${home}\\.ssh\\config`,
+    `${home}\\.aws\\credentials`,
+    `${home}\\project\\.env`,
+    `${home}\\project\\.ENV.local`,
+    `${home}\\project\\.env::$DATA`,
+    `${home}\\project\\.env.`,
+    `${home}\\certs\\server.pem`,
+    `${home}\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Login Data`,
+    `${home}\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\Cookies`,
+    `${home}\\AppData\\Roaming\\gh\\hosts.yml`,
+    `${home}\\.claude\\.credentials.json`,
+    path.join(process.env.JARVIS_DATA_DIR, 'token.json'),
+  ]) {
+    assert.equal(await files.isSensitive(file), true, file);
+  }
+  for (const file of [
+    `${home}\\Desktop\\resume.txt`,
+    `${home}\\project\\.env.example`,
+    `${home}\\project\\environment.md`,
+    `${home}\\Documents\\monkey.txt`,
+  ]) {
+    assert.equal(await files.isSensitive(file), false, file);
+  }
+});
+
+test('a link cannot disguise a sensitive folder', async (t) => {
   const outside = tempDir();
-  fs.writeFileSync(path.join(outside, 'secret.txt'), 'secret');
-  const link = path.join(FILES_DIR, 'escape');
+  const ssh = path.join(outside, '.ssh');
+  fs.mkdirSync(ssh);
+  fs.writeFileSync(path.join(ssh, 'notes.txt'), 'secret');
+  const link = path.join(process.env.JARVIS_FILES_DIR, 'innocent');
   try {
-    fs.symlinkSync(outside, link, 'junction');
+    fs.symlinkSync(ssh, link, 'junction');
   } catch (err) {
     return t.skip(`Can't create a link here: ${err.code}`);
   }
-  await assert.rejects(files.safePath('escape/secret.txt'), /outside/);
-  await assert.rejects(files.safePath('escape/new.txt'), /outside/);
+  assert.equal(await files.isSensitive(path.join(link, 'notes.txt')), true);
+});
+
+test('finds files by name, skipping noise folders', async () => {
+  const root = tempDir();
+  fs.mkdirSync(path.join(root, 'work', 'old'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'node_modules'));
+  fs.writeFileSync(path.join(root, 'work', 'old', 'My-Resume.pdf'), 'x');
+  fs.writeFileSync(path.join(root, 'node_modules', 'resume.js'), 'x');
+  fs.writeFileSync(path.join(root, 'other.txt'), 'x');
+  const { matches } = await files.findFiles('resume', root);
+  assert.deepEqual(matches, [path.join(root, 'work', 'old', 'My-Resume.pdf')]);
 });
 
 test('email headers cannot be injected', () => {

@@ -24,6 +24,11 @@ export async function startFakeLlm() {
     req.on('end', () => {
       requests.push(JSON.parse(body));
       const step = script.shift() ?? say('(script finished)');
+      if (step.status) {
+        res.writeHead(step.status, { 'Content-Type': 'application/json', ...step.headers });
+        res.end(JSON.stringify(step.body));
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       const emit = (delta) => res.write(`data: ${JSON.stringify({ choices: [{ delta }] })}\n\n`);
       if (step.text) {

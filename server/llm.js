@@ -1,7 +1,29 @@
 // Groq, Gemini and Ollama all expose the OpenAI chat-completions API, so one
 // client covers every provider. Switching brains is a single .env value.
 
+import { setTimeout as sleep } from 'node:timers/promises';
+
 export class LlmError extends Error {}
+
+// Free tiers count tokens per minute, so a short wait usually clears the limit.
+// Anything longer, like a used-up daily allowance, is reported instead.
+const MAX_RATE_LIMIT_WAIT_SECONDS = 30;
+const MAX_RATE_LIMIT_RETRIES = 3;
+
+function retryDelaySeconds(res, body) {
+  const header = Number(res.headers.get('retry-after'));
+  if (header > 0) return header;
+  const match = body.match(/try again in (?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?/i);
+  if (!match) return null;
+  const seconds = Number(match[1] || 0) * 3600 + Number(match[2] || 0) * 60 + Number(match[3] || 0);
+  return seconds > 0 ? seconds : null;
+}
+
+function describeWait(seconds) {
+  if (seconds == null) return 'Wait a little';
+  if (seconds < 90) return `Try again in ${Math.ceil(seconds)} seconds`;
+  return `Try again in about ${Math.ceil(seconds / 60)} minutes`;
+}
 
 function providers() {
   const env = process.env;
@@ -10,7 +32,7 @@ function providers() {
       baseUrl: 'https://api.groq.com/openai/v1',
       keyName: 'GROQ_API_KEY',
       key: env.GROQ_API_KEY,
-      model: env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+      model: env.GROQ_MODEL || 'openai/gpt-oss-120b',
     },
     gemini: {
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
@@ -50,10 +72,10 @@ function assertUsable(provider) {
   }
 }
 
-function describeHttpError(provider, status, body) {
+function describeHttpError(provider, status, body, waitSeconds) {
   const detail = body.slice(0, 300);
   if (status === 401 || status === 403) return `${provider.name} rejected the API key. Check it in .env.`;
-  if (status === 429) return `${provider.name}'s free limit was hit. Wait a little or switch LLM_PROVIDER. (${detail})`;
+  if (status === 429) return `${provider.name}'s free limit was hit. ${describeWait(waitSeconds)}, or switch LLM_PROVIDER in .env.`;
   if (status === 404) {
     const hint = provider.name === 'ollama' ? `Run: ollama pull ${provider.model}` : 'Change the model name in .env.';
     return `${provider.name} doesn't have the model "${provider.model}". ${hint}`;
@@ -120,8 +142,10 @@ async function streamOnce(provider, { messages, tools, onDelta, signal }) {
 
   if (!res.ok) {
     const body = await res.text();
-    const err = new LlmError(describeHttpError(provider, res.status, body));
+    const waitSeconds = res.status === 429 ? retryDelaySeconds(res, body) : null;
+    const err = new LlmError(describeHttpError(provider, res.status, body, waitSeconds));
     err.retryable = body.includes('tool_use_failed');
+    err.waitSeconds = waitSeconds;
     throw err;
   }
 
@@ -148,14 +172,29 @@ async function streamOnce(provider, { messages, tools, onDelta, signal }) {
   return { content, toolCalls };
 }
 
-export async function chat({ messages, tools = [], onDelta, signal }) {
+export async function chat({ messages, tools = [], onDelta, onWait, signal }) {
   const provider = getProvider();
   assertUsable(provider);
-  try {
-    return await streamOnce(provider, { messages, tools, onDelta, signal });
-  } catch (err) {
-    // Llama models on Groq sometimes write a malformed tool call. One retry usually clears it.
-    if (!err.retryable) throw err;
-    return streamOnce(provider, { messages, tools, onDelta, signal });
+  let rateLimitRetries = 0;
+  let malformedRetried = false;
+  for (;;) {
+    try {
+      return await streamOnce(provider, { messages, tools, onDelta, signal });
+    } catch (err) {
+      const canWait =
+        err.waitSeconds != null &&
+        err.waitSeconds <= MAX_RATE_LIMIT_WAIT_SECONDS &&
+        rateLimitRetries < MAX_RATE_LIMIT_RETRIES;
+      if (canWait) {
+        rateLimitRetries++;
+        onWait?.(err.waitSeconds);
+        await sleep((err.waitSeconds + 0.5) * 1000, undefined, { signal });
+      } else if (err.retryable && !malformedRetried) {
+        // Models on Groq sometimes write a malformed tool call. One retry usually clears it.
+        malformedRetried = true;
+      } else {
+        throw err;
+      }
+    }
   }
 }

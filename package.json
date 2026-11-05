@@ -8,6 +8,8 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
+    "autostart": "powershell -NoProfile -File scripts/autostart.ps1",
+    "autostart:off": "powershell -NoProfile -File scripts/autostart.ps1 -Off",
     "test": "node --test --test-concurrency=1 \"test/*.test.js\""
   },
   "dependencies": {
