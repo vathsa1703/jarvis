@@ -127,6 +127,9 @@ wss.on('connection', (socket) => {
       [...pending.values()].forEach((settle) => settle(false));
     } else if (event.type === 'clear') {
       clearHistory();
+    } else if (event.type === 'client_log' && typeof event.text === 'string') {
+      // Single line and capped, so the page can't forge or flood log entries.
+      console.log(`[client] ${new Date().toISOString()} ${event.text.replace(/[\r\n]+/g, ' ').slice(0, 200)}`);
     }
   });
 

@@ -1,6 +1,8 @@
 // All model, web and email text goes on the page through textContent, never
 // innerHTML, so nothing in a reply or a fetched page can run as code.
 
+import { parseWake } from './wake.js';
+
 const $ = (id) => document.getElementById(id);
 const orb = $('orb');
 const stateLabel = $('state');
@@ -258,8 +260,23 @@ function speak(text) {
 // ---- Listening
 
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-const WAKE_PATTERN = /\b(?:(?:hey|hi|ok|okay|yo)\s+)?jarvis\b[\s,.!?]*(.*)$/i;
 const ARM_WINDOW_MS = 8000;
+const heardLine = $('heard');
+
+// What the mic picked up goes on screen only. The log records events, never words.
+function report(text) {
+  console.debug(`[jarvis] ${text}`);
+  sendEvent({ type: 'client_log', text });
+}
+
+function showHeard(text) {
+  heardLine.textContent = text ? `Heard: ${text.trim()}` : '';
+}
+
+function recognitionLanguage() {
+  if (Intl.DateTimeFormat().resolvedOptions().timeZone === 'Asia/Kolkata') return 'en-IN';
+  return navigator.language || 'en-US';
+}
 
 let recognition = null;
 let micActive = false;   // one-shot, from the mic button
@@ -281,32 +298,50 @@ function handleTranscript(text) {
     submit(text);
     return;
   }
-  if (armed) {
+  const wake = parseWake(text);
+  if (wake) {
+    report('wake phrase detected');
+    if (wake.command) {
+      setArmed(false);
+      submit(wake.command);
+    } else {
+      setArmed(true);
+    }
+  } else if (armed) {
     setArmed(false);
     submit(text);
-    return;
   }
-  const match = text.match(WAKE_PATTERN);
-  if (!match) return;
-  if (match[1].trim()) submit(match[1]);
-  else setArmed(true);
 }
 
 function startRecognition(continuous) {
   if (!Recognition || recognition) return;
   const rec = new Recognition();
-  rec.lang = navigator.language || 'en-US';
+  rec.lang = recognitionLanguage();
   rec.continuous = continuous;
-  rec.interimResults = false;
+  rec.interimResults = true;
+  rec.onstart = () => report(`listening (${continuous ? 'wake word' : 'mic button'}, ${rec.lang}, page ${document.visibilityState})`);
   rec.onresult = (event) => {
     wakeFailures = 0;
     for (let i = event.resultIndex; i < event.results.length; i++) {
-      if (event.results[i].isFinal) handleTranscript(event.results[i][0].transcript);
+      const { transcript } = event.results[i][0];
+      showHeard(transcript);
+      if (event.results[i].isFinal) {
+        report('speech recognised');
+        handleTranscript(transcript);
+      } else if (parseWake(transcript)) {
+        setState('listening'); // Instant feedback, before the sentence is finished.
+      }
     }
   };
   rec.onerror = (event) => {
+    report(`recognition error: ${event.error}, page ${document.visibilityState}`);
     if (event.error === 'no-speech' || event.error === 'aborted') return;
     wakeFailures++;
+    if (event.error === 'audio-capture') {
+      addMessage('error', "Chrome can't get audio from your microphone. Check that it isn't muted or in use by another app.");
+      setWake(false);
+      return;
+    }
     if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
       addMessage('error', 'Microphone access is blocked. Allow it in the browser and try again.');
       setWake(false);
@@ -316,6 +351,7 @@ function startRecognition(continuous) {
     }
   };
   rec.onend = () => {
+    report(`stopped listening, page ${document.visibilityState}`);
     recognition = null;
     if (micActive) {
       micActive = false;
@@ -416,6 +452,8 @@ if (!Recognition) {
 } else if (store.get('jarvis.wake') === 'on') {
   setWake(true);
 }
+
+document.addEventListener('visibilitychange', () => report(`page ${document.visibilityState}`));
 
 speechSynthesis.getVoices(); // Voices load lazily in some browsers.
 refreshState();

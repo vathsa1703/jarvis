@@ -79,6 +79,20 @@ test('finds files by name, skipping noise folders', async () => {
   assert.deepEqual(matches, [path.join(root, 'work', 'old', 'My-Resume.pdf')]);
 });
 
+test('the wake phrase survives mishearing without firing on ordinary talk', async () => {
+  const { parseWake } = await import('../client/wake.js');
+  assert.deepEqual(parseWake('hey Jarvis what time is it'), { command: 'what time is it' });
+  assert.deepEqual(parseWake('Hey Jarvis, what time is it?'), { command: 'what time is it?' });
+  assert.deepEqual(parseWake('Jarvis'), { command: '' });
+  assert.deepEqual(parseWake('hey jarvis'), { command: '' });
+  assert.deepEqual(parseWake('ok so hey jarvis open notepad'), { command: 'open notepad' });
+  assert.deepEqual(parseWake('hey jervis open notepad'), { command: 'open notepad' });
+  assert.deepEqual(parseWake('hey Travis open notepad'), { command: 'open notepad' });
+  assert.equal(parseWake('I saw Travis Scott yesterday'), null);
+  assert.equal(parseWake('what a nice day'), null);
+  assert.equal(parseWake('the davis cup is on'), null);
+});
+
 test('email headers cannot be injected', () => {
   const raw = email.buildRawMessage({
     to: 'a@example.com\r\nBcc: evil@example.com',

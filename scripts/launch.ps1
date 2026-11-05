@@ -67,6 +67,12 @@ if ($window) {
         '--window-size=480,840',
         '--no-first-run',
         '--no-default-browser-check',
-        '--autoplay-policy=no-user-gesture-required'
+        '--autoplay-policy=no-user-gesture-required',
+        # Stop Chrome slowing the page down in the background. Speech recognition
+        # can still pause while the window is hidden; see Known limits in the README.
+        '--disable-features=CalculateNativeWinOcclusion',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--disable-background-timer-throttling'
     )
 }

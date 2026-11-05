@@ -105,7 +105,7 @@ Everything personal lives in `data/`, which git ignores: memory, portfolio, cont
 - **Groq's free tier is tight.** It allows 8,000 tokens a minute and each request uses about 2,000, so busy moments can pause for several seconds. Jarvis waits and retries by itself, and tells you if the wait would be long. There's also a limit of 1,000 requests a day. Groq retires models from time to time; if yours disappears, change `GROQ_MODEL` in `.env`.
 - **Web search can get rate limited.** It scrapes DuckDuckGo's free HTML page, which blocked automated use after a few searches in quick succession during testing. Wait a minute if that happens.
 - **Stock prices** come from an unofficial Yahoo Finance endpoint. They can be delayed, and the endpoint could change without notice.
-- **Voice input** uses the browser's speech service, so it needs Chrome or Edge, internet access and the tab open.
+- **Voice input** uses the browser's speech service, so it needs Chrome or Edge, internet access and the window open. In testing it appeared to pause while the window was hidden, so the wake word is most reliable with Jarvis visible on screen.
 - **Windows only** for now, because the PC tools use PowerShell.
 
 ## Tests

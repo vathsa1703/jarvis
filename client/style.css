@@ -86,6 +86,18 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
 .state { margin: 0 0 10px; text-align: center; font: 12px var(--mono); letter-spacing: 0.12em; color: var(--muted); text-transform: uppercase; }
 
+.heard {
+  margin: 0 auto 8px;
+  max-width: 90%;
+  min-height: 1.4em;
+  text-align: center;
+  font: 12px var(--mono);
+  color: var(--green);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* ---- Conversation ---- */
 .log {
   flex: 1;
