@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jarvis</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23050b14' stroke='%234fd8ff' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%234fd8ff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <span class="brand">J.A.R.V.I.S</span>
+    <span id="brain" class="brain">connecting…</span>
+  </header>
+
+  <section class="core" aria-hidden="true">
+    <div id="orb" class="orb idle">
+      <div class="ring ring-outer"></div>
+      <div class="ring ring-mid"></div>
+      <div class="ring ring-inner"></div>
+      <div class="heart"></div>
+    </div>
+  </section>
+  <p id="state" class="state" role="status">Standing by</p>
+
+  <main id="log" class="log" aria-live="polite" aria-label="Conversation"></main>
+
+  <footer class="dock">
+    <div class="toggles">
+      <button id="wake" class="toggle" type="button" aria-pressed="false" title="Listen for &quot;hey Jarvis&quot; while this tab is open">Wake word</button>
+      <button id="voice" class="toggle" type="button" aria-pressed="true" title="Read replies aloud">Speak replies</button>
+      <button id="clear" class="toggle" type="button" title="Clear the conversation. Saved facts stay.">New chat</button>
+    </div>
+    <form id="form" class="composer">
+      <button id="mic" class="mic" type="button" aria-label="Talk to Jarvis" title="Talk to Jarvis">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/>
+        </svg>
+      </button>
+      <input id="input" type="text" autocomplete="off" placeholder="Ask Jarvis anything…" aria-label="Message">
+      <button id="stop" class="stop" type="button" hidden>Stop</button>
+      <button id="send" class="send" type="submit">Send</button>
+    </form>
+  </footer>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>

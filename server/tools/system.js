@@ -1,0 +1,93 @@
+import { FILES_DIR } from '../config.js';
+import { runPowerShell, startDetached } from '../powershell.js';
+
+// Harmless apps open straight away. Anything else asks first, because the model
+// may be acting on a web page or email that's trying to trick it.
+const KNOWN_APPS = {
+  notepad: 'notepad.exe',
+  calculator: 'calc.exe',
+  calc: 'calc.exe',
+  paint: 'mspaint.exe',
+  explorer: 'explorer.exe',
+  'file explorer': 'explorer.exe',
+  chrome: 'chrome.exe',
+  'google chrome': 'chrome.exe',
+  edge: 'msedge.exe',
+  'microsoft edge': 'msedge.exe',
+  'vs code': 'code',
+  vscode: 'code',
+  'visual studio code': 'code',
+  spotify: 'spotify:',
+  settings: 'ms-settings:',
+};
+
+const knownApp = (name) => KNOWN_APPS[name.trim().toLowerCase()];
+
+export function parseWebUrl(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`"${value}" isn't a valid URL.`);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('Only http and https URLs are allowed.');
+  }
+  return url;
+}
+
+export default [
+  {
+    name: 'get_time',
+    description: 'Get the current local date and time.',
+    parameters: { type: 'object', properties: {} },
+    run: () =>
+      new Date().toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'short' }),
+  },
+  {
+    name: 'open_app',
+    description: 'Open an application on this PC by name, such as notepad, calculator, chrome or spotify.',
+    parameters: {
+      type: 'object',
+      properties: { name: { type: 'string', description: 'Application name' } },
+      required: ['name'],
+    },
+    confirm: ({ name }) =>
+      knownApp(name) ? null : { title: 'Open this program?', details: name },
+    run: async ({ name }) => {
+      await startDetached(knownApp(name) || name);
+      return `Opened ${name}.`;
+    },
+  },
+  {
+    name: 'open_url',
+    description: 'Open a web page in the default browser.',
+    parameters: {
+      type: 'object',
+      properties: { url: { type: 'string', description: 'Full http or https URL' } },
+      required: ['url'],
+    },
+    run: async ({ url }) => {
+      const parsed = parseWebUrl(url);
+      await startDetached(parsed.href);
+      return `Opened ${parsed.href}.`;
+    },
+  },
+  {
+    name: 'run_shell',
+    description:
+      'Run a PowerShell command on this PC and return its output. The user must approve each command. Prefer a more specific tool when one exists.',
+    parameters: {
+      type: 'object',
+      properties: { command: { type: 'string', description: 'PowerShell command' } },
+      required: ['command'],
+    },
+    confirm: ({ command }) => ({ title: 'Run this command?', details: command }),
+    run: async ({ command }) => {
+      const { code, stdout, stderr, timedOut } = await runPowerShell(command, { cwd: FILES_DIR });
+      if (timedOut) return `The command timed out after 60 seconds.\n${stdout}`;
+      return `Exit code ${code}\n${stdout}${stderr ? `\nErrors:\n${stderr}` : ''}`.trim();
+    },
+    untrusted: true,
+  },
+];
